@@ -211,8 +211,10 @@
 
 ; move when only 2 heaps left
 (definec two-heap-move (h :heap) :heap
-  :ic (^ (== (len h) 2) (posp (first h)) (posp (second h)))
-  (cond ((== (first h) (second h)) (list (1- (first h)) (second h)))
+  :ic (== (len h) 2) 
+  (cond ((== (first h) (second h)) (if (posp (first h))
+                                     (list (1- (first h)) (second h))
+                                     '()))
         ((> (first h) (second h)) (list (second h) (second h)))
         (t (list (first h) (first h)))))
 
@@ -225,54 +227,473 @@
   :ic (^ (> (len (second g)) 2) (posp (first (second g))))
   (if (== (first (second g)) 1)
     (list (switch-player (first g)) (rest (second g)) -1)
-    (list (switch-player (first g)) (cons (1- (first (second g))) (rest (second g))) -1)))#|ACL2s-ToDo-Line|#
-
+    (list (switch-player (first g)) (cons (1- (first (second g))) (rest (second g))) -1)))
 
 ; single move in general
 (definec opt-move (g :game) :game
   :ic (posp (len (second g)))
+  :skip-tests t
+  :skip-function-contractp t
+  :skip-body-contractsp t
   (cond ((== 1 (len (second g))) (list (first g) '() (first g)))
         ((== 2 (len (second g))) (list (switch-player (first g)) (two-heap-move (second g)) -1))
         (t (let* ((nim-sum-n (xor-bin (heap->lob (second g)) (len (heap->lob (second g)))))
                   (nim-sum-b (n->bt nim-sum-n)))
-             (if (== 0 nim-sum-n)
-               (sub-one g)
-               (let* ((ns-h-b (xor-lob-val (second g) nim-sum-b))
+             (if (!= 0 nim-sum-n)
+               (let* ((ns-h-b (xor-lob-val (heap->lob (second g)) nim-sum-b))
                       (ns-h-n (lob->heap ns-h-b)))
-                 (list (switch-player (first g)) (take-smallest (second g) ns-h-n '()) -1)))))))
-      
-         
+                 (list (switch-player (first g)) (take-smallest (second g) ns-h-n '()) -1))
+               (sub-one g))))))
+
+(check= (opt-move '(1 (1 2) -1)) (list 0 '(1 1) -1))
+(check= (opt-move '(1 (1) -1)) (list 1 '() 1))
+(check= (opt-move '(1 (1 2 3) -1)) '(0 (2 3) -1))
+(check= (opt-move '(1 (2 2 3) -1)) '(0 (1 2 3) -1))
+(check= (opt-move '(0 (3 7 8 10 12) -1)) '(1 (3 7 2 10 12) -1))
+(check= (opt-move '(0 (3 7 8 10 12) 1)) '(1 (3 7 2 10 12) -1))
+
+(defdata log (listof game))
+
+(definec no-zeros (input :heap) :bool
+  (match input
+    (nil t)
+    ((f . r) (if (== f 0)
+               nil
+               (no-zeros r)))))
+(check= (no-zeros '(1)) t)
+(check= (no-zeros '(1 1 2)) t)
+(check= (no-zeros '(1 1 0)) nil)
+
+(definec red-from-idx (h :heap idx :nat acc :heap) :heap
+  :ic (< idx (len h)) 
+  (if (== idx 0)
+    (if (== (first h) 0)
+      (app acc (rest h))
+      (app (app acc (list (1- (first h)))) (rest h)))
+    (red-from-idx (rest h) (1- idx) (app acc (list (first h))))))
+
+(check= (red-from-idx '(1) 0 '()) '(0))
+(check= (red-from-idx '(1 2 3 4) 2 '()) '(1 2 2 4))
+(check= (red-from-idx '(1 2 0 4) 2 '()) '(1 2 4))
+(check= (red-from-idx '(1 56 70 2 4 6) 1 '()) '(1 55 70 2 4 6))
+(check= (red-from-idx '(1 2 1 4) 2 '()) '(1 2 0 4))
+
+(definec get-val (h :heap idx :nat) :nat
+  :ic (< idx (len h)) 
+  (if (== idx 0)
+    (first h)
+    (get-val (rest h) (1- idx))))
+
+(check= (get-val '(1) 0) 1)
+(check= (get-val '(1 2 3) 1) 2)
+(check= (get-val '(1 2 3 4) 3) 4)
+
+(definec rem-zero-size-heaps-h (h :heap) :heap
+  (match h
+    (nil nil)
+    ((f . r) (if (== f 0)
+               (rem-zero-size-heaps-h r)
+               (cons f (rem-zero-size-heaps-h r))))))
+(check= (rem-zero-size-heaps-h nil) '())
+(check= (rem-zero-size-heaps-h '(1 2 3)) '(1 2 3))
+(check= (rem-zero-size-heaps-h '(1 0 2 0 3)) '(1 2 3))
+
+(definec rem-zero-size-heaps-log (g :log) :log
+  (match g
+    (nil nil)
+    ((f . r) (cons (list (first f) (rem-zero-size-heaps-h (second f)) (third f))
+                   (rem-zero-size-heaps-log r)))))
+(check= (rem-zero-size-heaps-log nil) nil)
+(check= (rem-zero-size-heaps-log '((1 (1 2 3) -1) (1 (1 2 0 0 0 3) -1) (1 (1 0 2 3) -1))) 
+        '((1 (1 2 3) -1) (1 (1 2 3) -1) (1 (1 2 3) -1)))
+
+(definec all-poss-one-idx (g :game idx :nat acc :log) :log
+  :ic (< idx (len (second g)))
+  :skip-admissibilityp t
+  :skip-body-contractsp t
+  (if (== 0 (get-val (second g) idx))
+    (rem-zero-size-heaps-log acc)
+    (all-poss-one-idx (list (first g) (red-from-idx (second g) idx '()) (third g))
+                      idx
+                      (append acc (list (list (first g) (red-from-idx (second g) idx '()) (third g)))))))
+  
+(check= (all-poss-one-idx (list 1 (list 2 3 4) -1) 0 '()) '((1 (1 3 4) -1) (1 (3 4) -1)))
 
 
+; !!!! POSSIBLE PROBLEM
 
+(definec check-for-win (g :game) :game
+  (if (endp (second g))
+    (list (first g) nil (first g))
+    g))
 
+(check= (check-for-win '(1 (1 2) -1)) '(1 (1 2) -1))
+(check= (check-for-win '(1 () -1)) '(1 () 1))
+(check= (check-for-win '(0 () -1)) '(0 () 0))
 
+(definec check-for-win-log (g :log) :log
+  (match g
+    (nil nil)
+    ((f . r) (cons (check-for-win f) (check-for-win-log r)))))
 
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
+(definec all-combos-game-start (g :game idx :nat) :log
+  :ic (<= idx (len (second g)))
+  :skip-tests t
+  :skip-admissibilityp t
+  :skip-function-contractp t
+  :skip-body-contractsp t
+  (if (== idx (len (second g)))
+    nil
+    (check-for-win-log (append (all-poss-one-idx g idx '()) (all-combos-game-start g (1+ idx))))))
+
+(definec all-combos-game-pre-switch (g :game) :log
+  (all-combos-game-start g 0))
+
+(check= (all-combos-game-pre-switch '(1 (1 2 3) -1)) 
+        '((1 (2 3) -1)
+          (1 (1 1 3) -1)
+          (1 (1 3) -1)
+          (1 (1 2 2) -1)
+          (1 (1 2 1) -1)
+          (1 (1 2) -1)))
+
+(check= (all-combos-game-pre-switch '(1 (3) -1)) 
+        '((1 (2) -1)
+          (1 (1) -1)
+          (1 () 1)))
+
+(definec switch-player-log (g :log) :log
+  (match g
+    (nil nil)
+    ((f . r) (cons (list (switch-player (first f)) (second f) (third f))
+                   (switch-player-log r)))))
+
+(check= (switch-player-log '((1 () -1))) '((0 () -1)))
+(check= (switch-player-log '((1 () -1) (0 () -1) (1 () -1))) '((0 () -1) (1 () -1) (0 () -1)))
+
+(definec all-combos-game (g :game) :log
+  (switch-player-log (all-combos-game-pre-switch g)))
+
+(check= (all-combos-game '(1 (1 2 3) -1)) 
+        '((0 (2 3) -1)
+          (0 (1 1 3) -1)
+          (0 (1 3) -1)
+          (0 (1 2 2) -1)
+          (0 (1 2 1) -1)
+          (0 (1 2) -1)))
+
+(check= (all-combos-game '(1 (3) -1)) 
+        '((0 (2) -1)
+          (0 (1) -1)
+          (0 () 1)))
+
+(definec all-combos-log (g :log) :log
+  (match g
+    (nil nil)
+    ((f . r) (append (all-combos-game f) (all-combos-log r)))))
+
+(check= (all-combos-log '((1 (2 3) -1) (1 (1 1 3) -1)))
+        '((0 (1 3) -1)
+          (0 (3) -1)
+          (0 (2 2) -1)
+          (0 (2 1) -1)
+          (0 (2) -1)
+          (0 (1 3) -1)
+          (0 (1 3) -1)
+          (0 (1 1 2) -1)
+          (0 (1 1 1) -1)
+          (0 (1 1) -1)))
+
+(check= (all-combos-log '((1 (2) -1) (1 (1 1 3) -1)))
+        '((0 (1) -1)
+          (0 () 1)
+          (0 (1 3) -1)
+          (0 (1 3) -1)
+          (0 (1 1 2) -1)
+          (0 (1 1 1) -1)
+          (0 (1 1) -1)))
+
+(definec all-pos-len (g :log) :bool
+  (match g
+    (nil t)
+    ((f . r) (if (posp (len (second f)))
+               (all-pos-len r)
+               nil))))
+
+(definec apply-opt-move (g :log) :log
+  :ic (all-pos-len g)
+  :skip-tests t
+  :skip-admissibilityp t
+  :skip-function-contractp t
+  :skip-body-contractsp t
+  (match g
+    (nil nil)
+    ((f . r) (cons (opt-move f) (apply-opt-move r)))))
+
+(check= (apply-opt-move '((1 (2 3) -1)
+                          (1 (1 1 3) -1)
+                          (1 (1 3) -1)
+                          (1 (1 2 2) -1)
+                          (1 (1 2 1) -1)
+                          (1 (1 2) -1)))
+        '((0 (2 2) -1)
+         (0 (1 1) -1)
+         (0 (1 1) -1)
+         (0 (2 2) -1)
+         (0 (1 1) -1)
+         (0 (1 1) -1)))
+
+(definec play-first-move (g :game) :log
+  :ic (posp (len (second g)))
+  :skip-admissibilityp t
+  :skip-function-contractp t
+  :skip-body-contractsp t
+  (if (== 0 (first g))
+    (list (opt-move g))
+    (all-combos-game g)))
+
+(check= (play-first-move '(1 (1 2 3) -1)) 
+        '((0 (2 3) -1)
+          (0 (1 1 3) -1)
+          (0 (1 3) -1)
+          (0 (1 2 2) -1)
+          (0 (1 2 1) -1)
+          (0 (1 2) -1)))
+(check= (play-first-move '(0 (1 2 3) -1)) '((1 (2 3) -1))) 
+
+(definec play-move (g :log) :log
+  :ic (all-pos-len g)
+  :skip-admissibilityp t
+  :skip-function-contractp t
+  :skip-body-contractsp t
+  (match g
+    (nil nil)
+    ((f . &) (if (== (first f) 0)
+               (apply-opt-move g)
+               (all-combos-log g)))))
+
+(check= (play-move '((1 (2 3) -1)
+                     (1 (1 1 3) -1)
+                     (1 (1 3) -1)
+                     (1 (1 2 2) -1)
+                     (1 (1 2 1) -1)
+                     (1 (1 2) -1)))
+        '((0 (1 3) -1)
+          (0 (3) -1)
+          (0 (2 2) -1)
+          (0 (2 1) -1)
+          (0 (2) -1)
+          (0 (1 3) -1)
+          (0 (1 3) -1)
+          (0 (1 1 2) -1)
+          (0 (1 1 1) -1)
+          (0 (1 1) -1)
+          (0 (3) -1)
+          (0 (1 2) -1)
+          (0 (1 1) -1)
+          (0 (1) -1)
+          (0 (2 2) -1)
+          (0 (1 1 2) -1)
+          (0 (1 2) -1)
+          (0 (1 2 1) -1)
+          (0 (1 2) -1)
+          (0 (2 1) -1)
+          (0 (1 1 1) -1)
+          (0 (1 1) -1)
+          (0 (1 2) -1)
+          (0 (2) -1)
+          (0 (1 1) -1)
+          (0 (1) -1))
+        )
+
+(check= (play-move '((0 (2 3) -1)
+                     (0 (1 1 3) -1)
+                     (0 (1 3) -1)
+                     (0 (1 2 2) -1)
+                     (0 (1 2 1) -1)
+                     (0 (1 2) -1)))
+        '((1 (2 2) -1)
+          (1 (1 1) -1)
+          (1 (1 1) -1)
+          (1 (2 2) -1)
+          (1 (1 1) -1)
+          (1 (1 1) -1)))
+
+(check= (play-move '((1 (2) -1)
+                     (1 (1 1 3) -1)
+                     (1 (1 3) -1)
+                     (1 (1 2 2) -1)
+                     (1 (1 2 1) -1)
+                     (1 (1 2) -1)))
+        '((0 (1) -1)
+          (0 nil 1)
+          (0 (1 3) -1)
+          (0 (1 3) -1)
+          (0 (1 1 2) -1)
+          (0 (1 1 1) -1)
+          (0 (1 1) -1)
+          (0 (3) -1)
+          (0 (1 2) -1)
+          (0 (1 1) -1)
+          (0 (1) -1)
+          (0 (2 2) -1)
+          (0 (1 1 2) -1)
+          (0 (1 2) -1)
+          (0 (1 2 1) -1)
+          (0 (1 2) -1)
+          (0 (2 1) -1)
+          (0 (1 1 1) -1)
+          (0 (1 1) -1)
+          (0 (1 2) -1)
+          (0 (2) -1)
+          (0 (1 1) -1)
+          (0 (1) -1)))
+
+(definec all-nil-have-winner (g :log) :bool
+  (match g
+    (nil t)
+    ((f . r) (if (and (endp (rem-zero-size-heaps-h (second f))) (or (== (third f) -1) (== (first f) (third f))))
+               nil
+               (all-nil-have-winner r)))))
+
+(check= (all-nil-have-winner '((0 (2 3) -1)
+                     (0 (1 1 3) -1)
+                     (0 (1 3) -1)
+                     (0 (1 2 2) -1)
+                     (0 (1 2 1) -1)
+                     (0 (1 2) -1))) t)
+(check= (all-nil-have-winner '((0 (2 3) -1)
+                     (0 (1 1 3) -1)
+                     (0 () -1)
+                     (0 (1 2 2) -1)
+                     (0 (1 2 1) -1)
+                     (0 (1 2) -1))) nil)
+(check= (all-nil-have-winner '((0 (2 3) -1)
+                     (0 (1 1 3) -1)
+                     (0 (0 0 0) -1)
+                     (0 (1 2 2) -1)
+                     (0 (1 2 1) -1)
+                     (0 (1 2) -1))) nil)
+(check= (all-nil-have-winner '((0 (2 3) -1)
+                     (0 (1 1 3) -1)
+                     (0 () 0)
+                     (0 (1 2 2) -1)
+                     (0 (1 2 1) -1)
+                     (0 (1 2) -1))) nil)
+(check= (all-nil-have-winner '((0 (2 3) -1)
+                     (0 (1 1 3) -1)
+                     (0 () 1)
+                     (0 (1 2 2) -1)
+                     (0 (1 2 1) -1)
+                     (0 (1 2) -1))) t)
+
+(definec ongoing-games-no-winner (g :log) :bool
+  :skip-admissibilityp t
+  :skip-function-contractp t
+  :skip-body-contractsp t
+  (let ((s-game (rem-zero-size-heaps-log g)))
+    (match s-game
+      (nil t)
+      ((f . r) (if (and (!(endp (second f))) (!= (third f) -1))
+                 nil
+                 (ongoing-games-no-winner r))))))
+
+(check= (ongoing-games-no-winner '((0 (1 2 3) 1))) nil)
+(check= (ongoing-games-no-winner '((0 (1 2 3) -1) (0 (1 2 3) -1) (0 (1 2 3) -1))) t)
+(check= (ongoing-games-no-winner '((0 () -1) (0 (1 2 3) -1) (0 (1 2 3) -1))) t)                 
+
+(definec play-game-acc (g :log acc :log) :log
+  :skip-admissibilityp t
+  :skip-function-contractp t
+  :skip-body-contractsp t
+  (let* ((s-game (rem-zero-size-heaps-log g)))
+    (match s-game
+      (nil acc)
+      ((f . r) (cond 
+                ((or (== (third f) 0) (== (third f) 1)) 
+                 (play-game-acc r (cons f acc)))
+                ((endp (second f)) 
+                 (play-game-acc r (cons f acc)))
+                (t (play-game-acc (append (play-first-move f) r) acc)))))))
+       
+(definec play-game (g :game) :log
+  (play-game-acc (list g) '()))
+
+(check= (play-game '(1 (1 2 3) -1))
+        '((0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)))
+(check= (play-game '(0 (1 2 3) -1))
+        '((0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 1)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)))
+
+(definec all-won-comp (g :log) :bool
+  (match g
+    (nil t)
+    ((f . r) (if (== (third f) 0)
+               (all-won-comp r)
+               nil))))
+(check= (all-won-comp 
+        '((0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0))) t)
+(check= (all-won-comp 
+        '((0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 1)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0)
+          (0 nil 0))) nil)
+
+(definec how-many-1-won (g :log) :nat
+  (match g
+    (nil 0)
+    ((f . r) (if (== (third f) 1)
+               (1+ (how-many-1-won r))
+               (how-many-1-won r)))))#|ACL2s-ToDo-Line|#
+
    
