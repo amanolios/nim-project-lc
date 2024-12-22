@@ -9,10 +9,10 @@
 
 ; Represents binary representation of number 
 (defdata bit (oneof 0 1))
-(defdata binary (listof bit))
+(defdata bv (listof bit))
 
-; Converts nat -> binary
-(definec ntb-helper (n :nat b :binary) :binary
+; Converts nat -> bv
+(definec ntb-helper (n :nat b :bv) :bv
   (if (zp n)
     b
     (ntb-helper (floor n 2) (cons (mod n 2) b))))
@@ -22,8 +22,8 @@
 (check= (ntb-helper 10 '()) '(1 0 1 0))
 (check= (ntb-helper 10 '(1)) '(1 0 1 0 1))
 
-;; n->bt: Nat --> Binary
-(definec n->bt (n :nat) :binary
+;; n->bt: Nat --> Bv
+(definec n->bt (n :nat) :bv
   (if (== n 0)
     '(0)
     (ntb-helper n '())))
@@ -34,7 +34,7 @@
 (check= (n->bt 17) '(1 0 0 0 1))
 
 ; Loops for bit -> n 
-(definec forloop (bv :binary power total-sum :nat) :nat
+(definec forloop (bv :bv power total-sum :nat) :nat
   (match bv
     (nil total-sum)
     ((f . r)
@@ -48,8 +48,8 @@
 (check= (forloop '(0) 4 10) 10)
 (check= (forloop '(0 1 0 1) 3 2) 82)
 
-; Binary -> nat
-(definec bt->n (bin :binary) :nat
+; Bv -> nat
+(definec bt->n (bin :bv) :nat
   (forloop (lrev bin) 0 0))
 
 (check= (bt->n '(1 0 1 0)) 10)  
@@ -58,11 +58,11 @@
 (check= (bt->n '(1 1 1 1 1)) 31) 
 (check= (bt->n ()) 0)
 
-; list of binary, representing the heaps
-(defdata lob (listof binary))
+; list of bv, representing the heaps
+(defdata lob (listof bv))
 
 ; adds an arbitrary number of zeros to b. Used for making 2 binary numbers equal length
-(definec add-zeros (b :binary n :nat) :binary
+(definec add-zeros (b :bv n :nat) :bv
   (if (== n 0)
     b
     (add-zeros (cons 0 b) (1- n))))
@@ -73,7 +73,7 @@
 (check= (add-zeros '(1 0) 2) '(0 0 1 0))
 
 ; makes 2 binary numbers the same length. Used to perform the xor operation on them.
-(definec make-same-len (b1 b2 :binary) :lob
+(definec make-same-len (b1 b2 :bv) :lob
   (cond ((== (len b1) (len b2)) (list b1 b2))
         ((< (len b1) (len b2)) (list (add-zeros b1 (- (len b2) (len b1))) b2))
         (t (list b1 (add-zeros b2 (- (len b1) (len b2)))))))
@@ -96,7 +96,7 @@
 (check= (nat-xor 1 1) 0)
 
 ; perform xor operation on 2 binary numbers
-(definec xor-two-bin-help (b1 b2 :binary output :binary) :binary
+(definec xor-two-bin-help (b1 b2 :bv output :bv) :bv
   :skip-tests t
   :skip-admissibilityp t
   :skip-function-contractp t
@@ -109,7 +109,7 @@
       ((f . r) (match b2-new
                  ((a . b) (xor-two-bin-help r b (cons (nat-xor f a) output)))))))) 
 
-(definec xor-two-bin (b1 b2 :binary) :binary
+(definec xor-two-bin (b1 b2 :bv) :bv
   (xor-two-bin-help b1 b2 '()))
 
 (check= (xor-two-bin '() '()) '())
@@ -140,7 +140,7 @@
 (check= (xor-bin '((1 0) (1 0 1) (1)) 3) 6)
 
 ; xor one value given with list of binary numbers
-(definec xor-lob-val (bins :lob b :binary) :lob
+(definec xor-lob-val (bins :lob b :bv) :lob
   (match bins
     (nil nil)
     ((f . r) (cons (xor-two-bin f b) (xor-lob-val r b)))))
@@ -201,6 +201,7 @@
                  (app acc r)
                  (app acc (list (first new)) r))
                (take-smallest r (rest new) (app acc (list f)))))))
+
 
 (check= (take-smallest '() '() '()) '())
 (check= (take-smallest '() '() '(1 2)) '(1 2))
@@ -318,9 +319,6 @@
                       (append acc (list (list (first g) (red-from-idx (second g) idx '()) (third g)))))))
   
 (check= (all-poss-one-idx (list 1 (list 2 3 4) -1) 0 '()) '((1 (1 3 4) -1) (1 (3 4) -1)))
-
-
-; !!!! POSSIBLE PROBLEM
 
 (definec check-for-win (g :game) :game
   (if (endp (second g))
